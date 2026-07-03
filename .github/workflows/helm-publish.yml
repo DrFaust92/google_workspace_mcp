@@ -25,10 +25,12 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
 
       - name: Set up Helm
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
 
       - name: Helm lint
         run: helm lint ${{ env.CHART_DIR }}
@@ -43,9 +45,9 @@ jobs:
             > /dev/null
 
   publish:
-    # Lint runs on every event; publishing only happens off a chart-v* tag
-    # (or a manual dispatch).
-    if: github.event_name != 'pull_request'
+    # Lint runs on every event; publishing only happens off a chart-v* tag push,
+    # so the tag/Chart.yaml version check below always applies.
+    if: github.event_name == 'push'
     needs: lint
     runs-on: ubuntu-latest
     permissions:
@@ -54,10 +56,12 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
 
       - name: Set up Helm
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
 
       - name: Read chart metadata
         id: chart
