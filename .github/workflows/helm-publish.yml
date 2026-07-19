@@ -9,7 +9,6 @@ on:
       - main
     paths:
       - 'helm-chart/**'
-  workflow_dispatch:
 
 permissions: {}
 
@@ -33,20 +32,25 @@ jobs:
         uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
 
       - name: Helm lint
-        run: helm lint ${{ env.CHART_DIR }}
+        # OAuth secrets are `required` by the chart; supply throwaway values so
+        # linting can render the templates without real credentials.
+        run: |
+          helm lint "${CHART_DIR}" \
+            --set secrets.googleOAuth.clientId=ci-render \
+            --set secrets.googleOAuth.clientSecret=ci-render
 
       - name: Helm template (render)
         # OAuth secrets are `required` by the chart; supply throwaway values so
         # rendering validates the templates without real credentials.
         run: |
-          helm template workspace-mcp ${{ env.CHART_DIR }} \
+          helm template workspace-mcp "${CHART_DIR}" \
             --set secrets.googleOAuth.clientId=ci-render \
             --set secrets.googleOAuth.clientSecret=ci-render \
             > /dev/null
 
   publish:
-    # Lint runs on every event; publishing only happens off a chart-v* tag push,
-    # so the tag/Chart.yaml version check below always applies.
+    # Lint runs on pull requests; publishing only happens off a chart-v* tag
+    # push, so the tag/Chart.yaml version check below always applies.
     if: github.event_name == 'push'
     needs: lint
     runs-on: ubuntu-latest
@@ -71,13 +75,14 @@ jobs:
           name=$(helm show chart "${CHART_DIR}" | awk '/^name:/ {print $2; exit}')
           version=$(helm show chart "${CHART_DIR}" | awk '/^version:/ {print $2; exit}')
           owner=$(echo "${REPO_OWNER}" | tr '[:upper:]' '[:lower:]')
-          echo "name=${name}" >> "$GITHUB_OUTPUT"
-          echo "version=${version}" >> "$GITHUB_OUTPUT"
-          echo "repo=oci://${REGISTRY}/${owner}/charts" >> "$GITHUB_OUTPUT"
+          {
+            echo "name=${name}"
+            echo "version=${version}"
+            echo "repo=oci://${REGISTRY}/${owner}/charts"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Verify tag matches chart version
-        # Only enforced for tag pushes; chart-v0.3.0 must match Chart.yaml's 0.3.0.
-        if: github.event_name == 'push'
+        # chart-v0.3.0 must match Chart.yaml's 0.3.0.
         env:
           REF_NAME: ${{ github.ref_name }}
           CHART_VERSION: ${{ steps.chart.outputs.version }}
@@ -103,11 +108,15 @@ jobs:
         run: helm package "${CHART_DIR}" --destination dist
 
       - name: Push chart to GHCR
+        env:
+          CHART_NAME: ${{ steps.chart.outputs.name }}
+          CHART_VERSION: ${{ steps.chart.outputs.version }}
+          CHART_REPO: ${{ steps.chart.outputs.repo }}
         run: |
-          chart="dist/${{ steps.chart.outputs.name }}-${{ steps.chart.outputs.version }}.tgz"
-          helm push "${chart}" "${{ steps.chart.outputs.repo }}"
+          chart="dist/${CHART_NAME}-${CHART_VERSION}.tgz"
+          helm push "${chart}" "${CHART_REPO}"
           {
-            echo "Published \`${{ steps.chart.outputs.name }}\` version \`${{ steps.chart.outputs.version }}\`"
+            echo "Published \`${CHART_NAME}\` version \`${CHART_VERSION}\`"
             echo ""
-            echo "    helm install workspace-mcp ${{ steps.chart.outputs.repo }}/${{ steps.chart.outputs.name }} --version ${{ steps.chart.outputs.version }}"
+            echo "    helm install workspace-mcp ${CHART_REPO}/${CHART_NAME} --version ${CHART_VERSION}"
           } >> "$GITHUB_STEP_SUMMARY"
