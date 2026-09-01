@@ -1955,3 +1955,88 @@ def validate_operation(operation: Dict[str, Any]) -> tuple[bool, str]:
             )
 
     return True, ""
+
+
+# Unicode OBJECT REPLACEMENT CHARACTER. Stands in for a non-text paragraph
+# element (inline image, page break, footnote reference, ...) so that the
+# extracted text keeps the same length as the document range it came from.
+OBJECT_REPLACEMENT_CHAR = "￼"
+
+# Paragraph elements that are not textRun but still occupy index positions.
+NON_TEXT_PARAGRAPH_ELEMENTS = (
+    "inlineObjectElement",
+    "pageBreak",
+    "columnBreak",
+    "horizontalRule",
+    "footnoteReference",
+    "person",
+    "richLink",
+    "equation",
+    "autoText",
+)
+
+TAB_HEADER_FORMAT = "\n--- TAB: {tab_name} (ID: {tab_id}) ---\n"
+
+
+def _paragraph_element_text(element: Dict[str, Any]) -> str:
+    """Return the text a single paragraph element contributes.
+
+    A textRun contributes its content verbatim. Any other element type
+    contributes OBJECT_REPLACEMENT_CHAR repeated to match the element's own
+    index span, so offsets computed from the result stay aligned with the
+    document. Falls back to a single character when the API omits the span.
+    """
+    text_run = element.get("textRun", {})
+    if text_run and "content" in text_run:
+        return text_run["content"]
+
+    if any(key in element for key in NON_TEXT_PARAGRAPH_ELEMENTS):
+        start = element.get("startIndex")
+        end = element.get("endIndex")
+        if isinstance(start, int) and isinstance(end, int) and end > start:
+            return OBJECT_REPLACEMENT_CHAR * (end - start)
+        return OBJECT_REPLACEMENT_CHAR
+
+    return ""
+
+
+def extract_text_from_elements(
+    elements: List[Dict[str, Any]],
+    tab_name: Optional[str] = None,
+    tab_id: Optional[str] = None,
+    depth: int = 0,
+) -> str:
+    """Extract text from Google Docs structural elements.
+
+    Empty paragraphs are preserved: a paragraph whose only content is a
+    newline still occupies an index in the document, so dropping it shifts
+    every subsequent offset. Non-textRun paragraph elements are represented
+    by OBJECT_REPLACEMENT_CHAR for the same reason.
+
+    Table cell text is included but is not index-aligned; the table and row
+    structure itself occupies indices that are not represented here.
+    """
+    if depth > 5:
+        return ""
+
+    text_lines = []
+    if tab_name:
+        text_lines.append(TAB_HEADER_FORMAT.format(tab_name=tab_name, tab_id=tab_id))
+
+    for element in elements:
+        if "paragraph" in element:
+            para_elements = element.get("paragraph", {}).get("elements", [])
+            text_lines.append(
+                "".join(_paragraph_element_text(pe) for pe in para_elements)
+            )
+        elif "table" in element:
+            table_rows = element.get("table", {}).get("tableRows", [])
+            for row in table_rows:
+                for cell in row.get("tableCells", []):
+                    cell_text = extract_text_from_elements(
+                        cell.get("content", []), depth=depth + 1
+                    )
+                    if cell_text:
+                        text_lines.append(cell_text)
+
+    return "".join(text_lines)

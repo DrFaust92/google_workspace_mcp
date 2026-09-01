@@ -44,6 +44,7 @@ from gdocs.docs_helpers import (
     create_delete_doc_tab_request,
     validate_suggestions_view_mode,
     create_update_paragraph_style_request,
+    extract_text_from_elements,
 )
 
 # Import document structure and table utilities
@@ -207,43 +208,6 @@ async def get_doc_content(
             )
             .execute
         )
-        TAB_HEADER_FORMAT = "\n--- TAB: {tab_name} (ID: {tab_id}) ---\n"
-
-        def extract_text_from_elements(elements, tab_name=None, tab_id=None, depth=0):
-            """Extract text from document elements (paragraphs, tables, etc.)"""
-            if depth > 5:
-                return ""
-            text_lines = []
-            if tab_name:
-                text_lines.append(
-                    TAB_HEADER_FORMAT.format(tab_name=tab_name, tab_id=tab_id)
-                )
-
-            for element in elements:
-                if "paragraph" in element:
-                    paragraph = element.get("paragraph", {})
-                    para_elements = paragraph.get("elements", [])
-                    current_line_text = ""
-                    for pe in para_elements:
-                        text_run = pe.get("textRun", {})
-                        if text_run and "content" in text_run:
-                            current_line_text += text_run["content"]
-                    if current_line_text.strip():
-                        text_lines.append(current_line_text)
-                elif "table" in element:
-                    # Handle table content
-                    table = element.get("table", {})
-                    table_rows = table.get("tableRows", [])
-                    for row in table_rows:
-                        row_cells = row.get("tableCells", [])
-                        for cell in row_cells:
-                            cell_content = cell.get("content", [])
-                            cell_text = extract_text_from_elements(
-                                cell_content, depth=depth + 1
-                            )
-                            if cell_text.strip():
-                                text_lines.append(cell_text)
-            return "".join(text_lines)
 
         def process_tab_hierarchy(tab, level=0):
             """Process a tab and its nested child tabs recursively"""
@@ -268,13 +232,13 @@ async def get_doc_content(
 
         body_elements = doc_data.get("body", {}).get("content", [])
         main_content = extract_text_from_elements(body_elements)
-        if main_content.strip():
+        if main_content:
             processed_text_lines.append(main_content)
 
         tabs = doc_data.get("tabs", [])
         for tab in tabs:
             tab_content = process_tab_hierarchy(tab)
-            if tab_content.strip():
+            if tab_content:
                 processed_text_lines.append(tab_content)
 
         body_text = "".join(processed_text_lines)
